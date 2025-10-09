@@ -18,6 +18,14 @@ import (
 	"go.uber.org/zap"
 )
 
+// maskAPIKey 遮罩 API Key，只顯示前後各 4 個字符
+func maskAPIKey(key string) string {
+	if len(key) <= 8 {
+		return "****"
+	}
+	return key[:4] + "..." + key[len(key)-4:]
+}
+
 func main() {
 	// 載入 .env
 	if err := godotenv.Load(); err != nil {
@@ -40,8 +48,8 @@ func main() {
 
 	// 使用 logger 記錄啟動信息
 	common.LogInfo("載入設定",
-		zap.String("openrouter_api_key", cfg.OpenRouter.APIKey),
-		zap.String("openrouter_model", cfg.OpenRouter.Model),
+		zap.String("gemini_api_key", maskAPIKey(cfg.Gemini.APIKey)),
+		zap.String("gemini_model", cfg.Gemini.Model),
 	)
 
 	// 初始化快取

@@ -27,7 +27,7 @@ type RecipeAction struct {
 	Action            string   `json:"action"`
 	ToolRequired      string   `json:"tool_required"`
 	MaterialRequired  []string `json:"material_required"`
-	TimeMinutes       int      `json:"time_minutes"`
+	TimeMinutes       string   `json:"time_minutes"`
 	InstructionDetail string   `json:"instruction_detail"`
 }
 

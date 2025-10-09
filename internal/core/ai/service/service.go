@@ -10,7 +10,7 @@ import (
 
 	"recipe-generator/internal/core/ai/cache"
 	"recipe-generator/internal/core/image"
-	openrouter "recipe-generator/internal/core/service"
+	gemini "recipe-generator/internal/core/service"
 	"recipe-generator/internal/infrastructure/config"
 )
 
@@ -26,7 +26,7 @@ type Response struct {
 // Service AI 服務
 type Service struct {
 	config       *config.Config
-	openRouter   *openrouter.OpenRouterService
+	gemini       *gemini.GeminiService
 	cacheManager *cache.CacheManager
 	imageSvc     *image.Service
 	mu           sync.RWMutex
@@ -35,15 +35,15 @@ type Service struct {
 
 // NewService 創建 AI 服務
 func NewService(cfg *config.Config, cacheManager *cache.CacheManager) (*Service, error) {
-	// 創建 OpenRouter 服務
-	openRouter := openrouter.NewOpenRouterService(cfg)
+	// 創建 Gemini 服務
+	geminiService := gemini.NewGeminiService(cfg)
 
 	// 創建圖片處理服務
 	imageSvc := image.NewService(cfg.Image.MaxSizeBytes)
 
 	return &Service{
 		config:       cfg,
-		openRouter:   openRouter,
+		gemini:       geminiService,
 		cacheManager: cacheManager,
 		imageSvc:     imageSvc,
 	}, nil
@@ -77,7 +77,7 @@ func (s *Service) ProcessRequest(ctx context.Context, prompt string, imageData s
 		}
 	}
 
-	content, err := s.openRouter.GenerateResponse(ctx, prompt, processedImageData)
+	content, err := s.gemini.GenerateResponse(ctx, prompt, processedImageData)
 	if err != nil {
 		return nil, err
 	}

@@ -50,21 +50,23 @@ type Recipe struct {
 }
 
 type RecipeStep struct {
-	StepNumber         int            `json:"step_number"`
-	Title              string         `json:"title"`
-	Description        string         `json:"description"`
-	Actions            []RecipeAction `json:"actions"`
-	EstimatedTotalTime string         `json:"estimated_total_time"`
-	Temperature        string         `json:"temperature"`
-	Warnings           string         `json:"warnings"`
-	Notes              string         `json:"notes"`
+	StepNumber         int             `json:"step_number"`
+	ARtype             ARtype          `json:"ARtype,omitempty"`
+	ARParameters       *ARActionParams `json:"ar_parameters,omitempty"`
+	Title              string          `json:"title"`
+	Description        string          `json:"description"`
+	Actions            []RecipeAction  `json:"actions"`
+	EstimatedTotalTime string          `json:"estimated_total_time"`
+	Temperature        string          `json:"temperature"`
+	Warnings           string          `json:"warnings"`
+	Notes              string          `json:"notes"`
 }
 
 type RecipeAction struct {
 	Action            string   `json:"action"`
 	ToolRequired      string   `json:"tool_required"`
 	MaterialRequired  []string `json:"material_required"`
-	TimeMinutes       int      `json:"time_minutes"`
+	TimeMinutes       string   `json:"time_minutes"` // 改為字串以接受 AI 可能返回的各種格式
 	InstructionDetail string   `json:"instruction_detail"`
 }
 
@@ -122,4 +124,43 @@ type PossibleIngredient struct {
 type PossibleEquipment struct {
 	Name string `json:"name"`
 	Type string `json:"type"`
+}
+
+// --- AR enum & params ---
+
+type ARtype string
+
+const (
+	ARPutIntoContainer ARtype = "putIntoContainer"
+	ARStir             ARtype = "stir"
+	ARPourLiquid       ARtype = "pourLiquid"
+	ARFlipPan          ARtype = "flipPan"
+	ARCountdown        ARtype = "countdown"
+	ARTemperature      ARtype = "temperature"
+	ARFlame            ARtype = "flame"
+	ARSprinkle         ARtype = "sprinkle"
+	ARTorch            ARtype = "torch"
+	ARCut              ARtype = "cut"
+	ARPeel             ARtype = "peel"
+	ARFlip             ARtype = "flip"
+	ARBeatEgg          ARtype = "beatEgg"
+)
+
+type FlameLevel string
+
+const (
+	FlameSmall  FlameLevel = "small"
+	FlameMedium FlameLevel = "medium"
+	FlameLarge  FlameLevel = "large"
+)
+
+// 你若有固定的容器清單，可以做枚舉；先用 string 方便擴充
+type ARActionParams struct {
+	Type        ARtype      `json:"type"`                // discriminator
+	Container   string      `json:"container,omitempty"` // pan, pot, bowl...
+	Ingredient  *string     `json:"ingredient"`          // 允許 null
+	Color       *string     `json:"color"`               // 允許 null
+	Time        *float64    `json:"time"`                // 允許 null
+	Temperature *float64    `json:"temperature"`         // 允許 null
+	FlameLevel  *FlameLevel `json:"flameLevel"`          // 允許 null
 }

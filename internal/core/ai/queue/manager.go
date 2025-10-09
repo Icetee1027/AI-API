@@ -6,23 +6,22 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"recipe-generator/internal/core/ai/openrouter"
 	"recipe-generator/internal/infrastructure/config"
 	"recipe-generator/internal/pkg/common"
 
 	"go.uber.org/zap"
 )
 
-// Request 隊列請求
+// Request 隊列請求（已棄用，改用直接調用）
 type Request struct {
 	Context context.Context
-	Request *openrouter.Request
+	Request interface{} // 改為 interface{} 以保持兼容性
 	Result  chan Result
 }
 
 // Result 處理結果
 type Result struct {
-	Response *openrouter.Response
+	Response interface{} // 改為 interface{} 以保持兼容性
 	Error    error
 }
 
@@ -58,8 +57,8 @@ func (m *Manager) GetQueue() <-chan *Request {
 	return m.queue
 }
 
-// Enqueue 將請求加入隊列
-func (m *Manager) Enqueue(ctx context.Context, req *openrouter.Request) (chan Result, error) {
+// Enqueue 將請求加入隊列（已棄用）
+func (m *Manager) Enqueue(ctx context.Context, req interface{}) (chan Result, error) {
 	// 檢查隊列容量
 	if len(m.queue) >= m.config.Queue.MaxSize {
 		return nil, fmt.Errorf("queue is full")

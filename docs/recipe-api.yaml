@@ -246,6 +246,8 @@ components:
       properties:
         step_number:
           type: integer
+        ARtype:
+          $ref: '#/components/schemas/ARtype'
         title:
           type: string
         description:
@@ -303,3 +305,196 @@ components:
             serving_size:
               type: string
       required: [available_ingredients, available_equipment, preference]
+    #AR類型
+    ARtype:
+      type: string
+      description: AR 動畫類型
+      enum:
+        - putIntoContainer
+        - stir
+        - pourLiquid
+        - flipPan
+        - countdown
+        - temperature
+        - flame
+        - sprinkle
+        - torch
+        - cut
+        - peel
+        - flip
+        - beatEgg
+
+    FlameLevel:
+      type: string
+      description: 火焰強度
+      enum: [small, medium, large]
+
+    Container:
+      type: string
+      description: 容器
+      enum: [pan, pot, bowl, plate, wok, cup, bakingTray]
+
+    ARActionBase:
+      type: object
+      properties:
+        type:
+          $ref: '#/components/schemas/ARtype'
+        container:
+          $ref: '#/components/schemas/Container'
+        ingredient:
+          type: string
+          description: 食材字串，**需小寫字母開頭**
+          nullable: true
+          pattern: "^[a-z].*$"
+        color:
+          type: string
+          nullable: true
+        time:
+          type: number
+          nullable: true
+        temperature:
+          type: number
+          nullable: true
+        flameLevel:
+          $ref: '#/components/schemas/FlameLevel'
+
+    # --- 依 type 分流後的具體 schema（用 const 鎖定 type，並補上 required）---
+    ARPutIntoContainerParams:
+      allOf:
+        - $ref: '#/components/schemas/ARActionBase'
+        - type: object
+          properties:
+            type:
+              type: string
+              const: putIntoContainer
+          required: [type, ingredient, container]
+
+    ARStirParams:
+      allOf:
+        - $ref: '#/components/schemas/ARActionBase'
+        - type: object
+          properties:
+            type: { type: string, const: stir }
+          required: [type, container, ingredient]
+
+    ARPourLiquidParams:
+      allOf:
+        - $ref: '#/components/schemas/ARActionBase'
+        - type: object
+          properties:
+            type: { type: string, const: pourLiquid }
+          required: [type, container, color, ingredient]
+
+    ARFlipPanParams:
+      allOf:
+        - $ref: '#/components/schemas/ARActionBase'
+        - type: object
+          properties:
+            type: { type: string, const: flipPan }
+          required: [type, container]
+
+    ARCountdownParams:
+      allOf:
+        - $ref: '#/components/schemas/ARActionBase'
+        - type: object
+          properties:
+            type: { type: string, const: countdown }
+          required: [type, time, container]
+
+    ARTemperatureParams:
+      allOf:
+        - $ref: '#/components/schemas/ARActionBase'
+        - type: object
+          properties:
+            type: { type: string, const: temperature }
+          required: [type, temperature, container]
+
+    ARFlameParams:
+      allOf:
+        - $ref: '#/components/schemas/ARActionBase'
+        - type: object
+          properties:
+            type: { type: string, const: flame }
+          required: [type, container, flameLevel]
+
+    ARSprinkleParams:
+      allOf:
+        - $ref: '#/components/schemas/ARActionBase'
+        - type: object
+          properties:
+            type: { type: string, const: sprinkle }
+          required: [type, container, ingredient]
+
+    ARTorchParams:
+      allOf:
+        - $ref: '#/components/schemas/ARActionBase'
+        - type: object
+          properties:
+            type: { type: string, const: torch }
+          required: [type, ingredient]
+
+    ARCutParams:
+      allOf:
+        - $ref: '#/components/schemas/ARActionBase'
+        - type: object
+          properties:
+            type: { type: string, const: cut }
+          required: [type, ingredient]
+
+    ARPeelParams:
+      allOf:
+        - $ref: '#/components/schemas/ARActionBase'
+        - type: object
+          properties:
+            type: { type: string, const: peel }
+          required: [type, ingredient]
+
+    ARFlipParams:
+      allOf:
+        - $ref: '#/components/schemas/ARActionBase'
+        - type: object
+          properties:
+            type: { type: string, const: flip }
+          required: [type, container, ingredient]
+
+    ARBeatEggParams:
+      allOf:
+        - $ref: '#/components/schemas/ARActionBase'
+        - type: object
+          properties:
+            type: { type: string, const: beatEgg }
+          required: [type, container]
+
+    # 對外暴露的統一入口：依 type 自動分派
+    ARActionParams:
+      oneOf:
+        - $ref: '#/components/schemas/ARPutIntoContainerParams'
+        - $ref: '#/components/schemas/ARStirParams'
+        - $ref: '#/components/schemas/ARPourLiquidParams'
+        - $ref: '#/components/schemas/ARFlipPanParams'
+        - $ref: '#/components/schemas/ARCountdownParams'
+        - $ref: '#/components/schemas/ARTemperatureParams'
+        - $ref: '#/components/schemas/ARFlameParams'
+        - $ref: '#/components/schemas/ARSprinkleParams'
+        - $ref: '#/components/schemas/ARTorchParams'
+        - $ref: '#/components/schemas/ARCutParams'
+        - $ref: '#/components/schemas/ARPeelParams'
+        - $ref: '#/components/schemas/ARFlipParams'
+        - $ref: '#/components/schemas/ARBeatEggParams'
+      discriminator:
+        propertyName: type
+        mapping:
+          putIntoContainer: '#/components/schemas/ARPutIntoContainerParams'
+          stir: '#/components/schemas/ARStirParams'
+          pourLiquid: '#/components/schemas/ARPourLiquidParams'
+          flipPan: '#/components/schemas/ARFlipPanParams'
+          countdown: '#/components/schemas/ARCountdownParams'
+          temperature: '#/components/schemas/ARTemperatureParams'
+          flame: '#/components/schemas/ARFlameParams'
+          sprinkle: '#/components/schemas/ARSprinkleParams'
+          torch: '#/components/schemas/ARTorchParams'
+          cut: '#/components/schemas/ARCutParams'
+          peel: '#/components/schemas/ARPeelParams'
+          flip: '#/components/schemas/ARFlipParams'
+          beatEgg: '#/components/schemas/ARBeatEggParams'
+

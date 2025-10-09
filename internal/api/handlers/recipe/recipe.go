@@ -33,21 +33,23 @@ type RecipeByNameResponse struct {
 }
 
 type RecipeStep struct {
-	StepNumber         int            `json:"step_number"`
-	Title              string         `json:"title"`
-	Description        string         `json:"description"`
-	Actions            []RecipeAction `json:"actions"`
-	EstimatedTotalTime string         `json:"estimated_total_time"`
-	Temperature        string         `json:"temperature"`
-	Warnings           string         `json:"warnings"`
-	Notes              string         `json:"notes"`
+	StepNumber         int                    `json:"step_number"`
+	ARtype             common.ARtype          `json:"ARtype,omitempty"`
+	ARParameters       *common.ARActionParams `json:"ar_parameters,omitempty"`
+	Title              string                 `json:"title"`
+	Description        string                 `json:"description"`
+	Actions            []RecipeAction         `json:"actions"`
+	EstimatedTotalTime string                 `json:"estimated_total_time"`
+	Temperature        string                 `json:"temperature"`
+	Warnings           string                 `json:"warnings"`
+	Notes              string                 `json:"notes"`
 }
 
 type RecipeAction struct {
 	Action            string   `json:"action"`
 	ToolRequired      string   `json:"tool_required"`
 	MaterialRequired  []string `json:"material_required"`
-	TimeMinutes       int      `json:"time_minutes"`
+	TimeMinutes       string   `json:"time_minutes"`
 	InstructionDetail string   `json:"instruction_detail"`
 }
 
@@ -179,6 +181,8 @@ func (h *Handler) HandleRecipeByName(c *gin.Context) {
 		}
 		response.Recipe[i] = RecipeStep{
 			StepNumber:         step.StepNumber,
+			ARtype:             step.ARtype,
+			ARParameters:       step.ARParameters,
 			Title:              step.Title,
 			Description:        step.Description,
 			Actions:            actions,
@@ -313,6 +317,8 @@ func (h *Handler) HandleRecipeByIngredients(c *gin.Context) {
 		}
 		response.Recipe[j] = RecipeStep{
 			StepNumber:         step.StepNumber,
+			ARtype:             step.ARtype,
+			ARParameters:       step.ARParameters,
 			Title:              step.Title,
 			Description:        step.Description,
 			Actions:            actions,

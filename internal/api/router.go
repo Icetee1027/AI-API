@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"recipe-generator/internal/api/handlers/health"
 	recipeHandler "recipe-generator/internal/api/handlers/recipe"
 	"recipe-generator/internal/api/middleware"
@@ -22,8 +21,8 @@ import (
 )
 
 const (
-	// 超時設置
-	timeoutDuration = 120 * time.Second
+	// 超時設置 - 增加到 10 分鐘以支援複雜的食譜生成
+	timeoutDuration = 600 * time.Second
 	// 請求體大小限制 (10MB)
 	maxBodySize = 10 << 20
 )
@@ -47,7 +46,6 @@ func SetupRouter(cfg *config.Config, cacheManager *cache.CacheManager) (*gin.Eng
 	// 註冊基礎中間件
 	router.Use(middleware.Recovery())
 	router.Use(middleware.Logger())
-	router.Use(middleware.Deduplication(cfg))
 	router.Use(requestid.New()) // 自動生成請求 ID
 
 	// CORS 設置
@@ -66,7 +64,7 @@ func SetupRouter(cfg *config.Config, cacheManager *cache.CacheManager) (*gin.Eng
 	common.LogInfo("Initializing services",
 		zap.Bool("cache_enabled", cfg.Cache.Enabled),
 		zap.Int("queue_workers", cfg.Queue.Workers),
-		zap.String("model", cfg.OpenRouter.Model),
+		zap.String("model", cfg.Gemini.Model),
 		zap.Duration("timeout", timeoutDuration),
 	)
 
@@ -115,7 +113,7 @@ func SetupRouter(cfg *config.Config, cacheManager *cache.CacheManager) (*gin.Eng
 	router.Use(func(c *gin.Context) {
 		// 設置請求超時
 		ctx, cancel := context.WithTimeout(c.Request.Context(), timeoutDuration)
-		defer cancel()
+		defer cancel() // 確保資源被釋放
 
 		// 創建新的請求上下文
 		req := c.Request.WithContext(ctx)
@@ -148,22 +146,13 @@ func SetupRouter(cfg *config.Config, cacheManager *cache.CacheManager) (*gin.Eng
 		// 處理請求
 		c.Next()
 
-		// 檢查是否超時
+		// 檢查是否超時（但不嘗試寫入響應，因為可能已經寫入了）
 		if ctx.Err() == context.DeadlineExceeded {
-			common.LogError("Request timeout",
+			common.LogWarn("Request completed but exceeded deadline",
 				zap.String("path", c.Request.URL.Path),
 				zap.String("request_id", c.GetHeader("X-Request-ID")),
 				zap.Duration("timeout", timeoutDuration),
 			)
-			c.JSON(http.StatusGatewayTimeout, gin.H{
-				"error": "Request timeout",
-				"code":  "REQUEST_TIMEOUT",
-				"details": gin.H{
-					"timeout": timeoutDuration.String(),
-				},
-			})
-			c.Abort()
-			return
 		}
 	})
 

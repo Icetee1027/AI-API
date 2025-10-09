@@ -11,16 +11,16 @@ import (
 
 // Config 應用配置
 type Config struct {
-	App         AppConfig        `mapstructure:"app"`
-	Server      ServerConfig     `mapstructure:"server"`
-	OpenRouter  OpenRouterConfig `mapstructure:"openrouter"`
-	AI          AIConfig         `mapstructure:"ai"`
-	Cache       CacheConfig      `mapstructure:"cache"`
-	Queue       QueueConfig      `mapstructure:"queue"`
-	RateLimit   RateLimitConfig  `mapstructure:"rate_limit"`
-	Image       ImageConfig      `mapstructure:"image"`
-	DedupWindow time.Duration    `mapstructure:"dedup_window"`
-	LogLevel    string           `mapstructure:"log_level"`
+	App         AppConfig       `mapstructure:"app"`
+	Server      ServerConfig    `mapstructure:"server"`
+	Gemini      GeminiConfig    `mapstructure:"gemini"`
+	AI          AIConfig        `mapstructure:"ai"`
+	Cache       CacheConfig     `mapstructure:"cache"`
+	Queue       QueueConfig     `mapstructure:"queue"`
+	RateLimit   RateLimitConfig `mapstructure:"rate_limit"`
+	Image       ImageConfig     `mapstructure:"image"`
+	DedupWindow time.Duration   `mapstructure:"dedup_window"`
+	LogLevel    string          `mapstructure:"log_level"`
 }
 
 // AppConfig 應用程式設定
@@ -40,8 +40,8 @@ type ServerConfig struct {
 	IdleTimeout  time.Duration `mapstructure:"idle_timeout"`
 }
 
-// OpenRouterConfig OpenRouter 配置
-type OpenRouterConfig struct {
+// GeminiConfig Gemini 配置
+type GeminiConfig struct {
 	Enabled   bool          `mapstructure:"enabled"`
 	APIKey    string        `mapstructure:"api_key"`
 	Model     string        `mapstructure:"model"`
@@ -98,13 +98,33 @@ func LoadConfig() (*Config, error) {
 	viper.AutomaticEnv()
 
 	// 綁定環境變量
-	viper.BindEnv("openrouter.api_key", "OPENROUTER_API_KEY")
-	viper.BindEnv("openrouter.model", "OPENROUTER_MODEL")
-	viper.BindEnv("openrouter.max_tokens", "MODEL_MAX_TOKENS")
+	// 服務器配置
+	viper.BindEnv("server.port", "PORT")
+	viper.BindEnv("server.read_timeout", "SERVER_READ_TIMEOUT")
+	viper.BindEnv("server.write_timeout", "SERVER_WRITE_TIMEOUT")
+	viper.BindEnv("server.idle_timeout", "SERVER_IDLE_TIMEOUT")
+
+	// Gemini 配置
+	viper.BindEnv("gemini.api_key", "GEMINI_API_KEY")
+	viper.BindEnv("gemini.model", "GEMINI_MODEL")
+	viper.BindEnv("gemini.max_tokens", "MODEL_MAX_TOKENS")
+
+	// 快取配置
 	viper.BindEnv("cache.enabled", "CACHE_ENABLED")
+	viper.BindEnv("cache.max_size", "CACHE_MAX_SIZE")
+	viper.BindEnv("cache.ttl", "CACHE_TTL")
+	viper.BindEnv("cache.cleanup_interval", "CACHE_CLEANUP_INTERVAL")
+
+	// 限流配置
 	viper.BindEnv("rate_limit.enabled", "RATE_LIMIT_ENABLED")
 	viper.BindEnv("rate_limit.requests", "RATE_LIMIT_REQUESTS")
 	viper.BindEnv("rate_limit.window", "RATE_LIMIT_WINDOW")
+
+	// 隊列配置
+	viper.BindEnv("queue.workers", "QUEUE_WORKERS")
+	viper.BindEnv("queue.max_size", "QUEUE_MAX_SIZE")
+
+	// 其他配置
 	viper.BindEnv("dedup_window", "DEDUP_WINDOW")
 	viper.BindEnv("log_level", "LOG_LEVEL")
 
@@ -121,7 +141,9 @@ func LoadConfig() (*Config, error) {
 	}
 
 	// 添加調試日誌（logger 尚未初始化，改用 fmt.Println）
-	fmt.Println("Loading configuration", "openrouter_api_key:", maskAPIKey(viper.GetString("openrouter.api_key")), "openrouter_model:", viper.GetString("openrouter.model"))
+	fmt.Println("Loading configuration",
+		"gemini_api_key:", maskAPIKey(viper.GetString("gemini.api_key")),
+		"gemini_model:", viper.GetString("gemini.model"))
 
 	// 解析設定
 	var config Config
@@ -156,15 +178,15 @@ func setDefaults() {
 
 	// 伺服器設定
 	viper.SetDefault("server.port", 8080)
-	viper.SetDefault("server.read_timeout", "30s")
-	viper.SetDefault("server.write_timeout", "30s")
-	viper.SetDefault("server.idle_timeout", "120s")
+	viper.SetDefault("server.read_timeout", "600s")
+	viper.SetDefault("server.write_timeout", "600s")
+	viper.SetDefault("server.idle_timeout", "600s")
 
-	// OpenRouter 設定
-	viper.SetDefault("openrouter.enabled", false)
-	viper.SetDefault("openrouter.model", "qwen/qwen2.5-vl-72b-instruct:free")
-	viper.SetDefault("openrouter.max_tokens", 1000)
-	viper.SetDefault("openrouter.timeout", "60s")
+	// Gemini 設定
+	viper.SetDefault("gemini.enabled", true)
+	viper.SetDefault("gemini.model", "gemini-2.5-flash")
+	viper.SetDefault("gemini.max_tokens", 8192)
+	viper.SetDefault("gemini.timeout", "300s")
 
 	// AI 設定
 	viper.SetDefault("ai.enable_cache", true)
