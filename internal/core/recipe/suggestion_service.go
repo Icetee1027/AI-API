@@ -111,7 +111,7 @@ func (s *SuggestionService) SuggestRecipes(ctx context.Context, req *common.Reci
 8. 推薦的食譜要優先使用已有的食材和設備
 9. 如果某些食材或設備不足，可以建議替代方案
 10. 每個食譜都要考慮到烹飪難度和時間
-		11. time_minutes 欄位應為字串格式（例如："1"、"2"、"未知"）
+11. time_minutes 欄位應為字串格式（例如："1"、"2"、"未知"）
 12. warnings 欄位必須是字串類型，如果沒有警告事項請填寫 null
 13. 每個步驟都必須包含 warnings 欄位，不能省略此欄位
 14. 不要使用\n，不需要換行
@@ -298,64 +298,119 @@ func (s *SuggestionService) SuggestRecipes(ctx context.Context, req *common.Reci
 			result.Recipe[i].Notes = "無備註"
 		}
 
-		// === 交給 AI 產生 ar_parameters（不代填、不猜測；每步驟必須要有） ===
-		typeChoices := []string{
-			string(common.ARPutIntoContainer), string(common.ARStir), string(common.ARPourLiquid),
-			string(common.ARFlipPan), string(common.ARCountdown), string(common.ARTemperature),
-			string(common.ARFlame), string(common.ARSprinkle), string(common.ARTorch),
-			string(common.ARCut), string(common.ARPeel), string(common.ARFlip), string(common.ARBeatEgg),
-		}
-		containerChoices := inferContainerChoices(result.Equipment) // 僅提供候選讓 AI 自選
-		stepText := result.Recipe[i].Title + "。 " + result.Recipe[i].Description
+		// 動作資訊補齊的邏輯會在批次產生 AR 參數後再執行
+	}
 
-		// 1) 第一次提示：標準版
-		arPrompt := buildARParamPrompt(stepText, typeChoices, containerChoices)
+	typeChoices := []string{
+		string(common.ARPutIntoContainer), string(common.ARStir), string(common.ARPourLiquid),
+		string(common.ARFlipPan), string(common.ARCountdown), string(common.ARTemperature),
+		string(common.ARFlame), string(common.ARSprinkle), string(common.ARTorch),
+		string(common.ARCut), string(common.ARPeel), string(common.ARFlip), string(common.ARBeatEgg),
+	}
+	containerChoices := inferContainerChoices(result.Equipment)
 
-		// 2) 重試/修復策略：最多 3 次
-		var params common.ARActionParams
-		var genErr error
-		const maxTries = 3
-		for attempt := 1; attempt <= maxTries; attempt++ {
-			genErr = s.jsonInto(ctx, arPrompt, &params)
-			if genErr == nil {
-				if err := validateARParams(params); err == nil {
-					// OK：通過驗證 → 回填
-					result.Recipe[i].ARtype = params.Type
-					result.Recipe[i].ARParameters = &params
-					break
-				} else {
-					// 產出了但驗證失敗 → 強化提示再試
-					arPrompt = buildARParamPromptStrict(stepText, typeChoices, containerChoices, fmt.Sprintf("上次錯誤：%v", err))
-					continue
-				}
-			}
-			// 沒解析到 JSON → 強化提示再試
-			arPrompt = buildARParamPromptStrict(stepText, typeChoices, containerChoices, "請只輸出單一 JSON，不要包含任何自然語言或程式碼區塊標記")
-		}
-
-		if result.Recipe[i].ARParameters == nil {
-			fallback, ferr := fallbackARParams(result.Recipe[i], containerChoices, result.Ingredients)
-			if ferr != nil {
-				common.LogWarn("AR 參數回退失敗，採用預設值",
+	var stepsToGenerate []arPromptStep
+	for i := range result.Recipe {
+		if result.Recipe[i].ARParameters != nil {
+			if err := validateARParams(*result.Recipe[i].ARParameters); err != nil {
+				common.LogWarn("AI 回傳的 AR 參數驗證失敗，重新生成",
 					zap.Int("step", i+1),
 					zap.String("title", result.Recipe[i].Title),
+					zap.Error(err),
+				)
+				result.Recipe[i].ARParameters = nil
+			} else {
+				result.Recipe[i].ARtype = result.Recipe[i].ARParameters.Type
+				continue
+			}
+		}
+
+		stepsToGenerate = append(stepsToGenerate, arPromptStep{
+			Index:       i,
+			StepNumber:  result.Recipe[i].StepNumber,
+			Title:       result.Recipe[i].Title,
+			Description: result.Recipe[i].Description,
+		})
+	}
+
+	if len(stepsToGenerate) > 0 {
+		const maxTries = 3
+		remaining := stepsToGenerate
+		reason := ""
+
+		for attempt := 1; attempt <= maxTries && len(remaining) > 0; attempt++ {
+			var prompt string
+			if attempt == 1 && reason == "" {
+				prompt = buildBatchARParamPromptWithoutTypeGuidance(remaining, typeChoices, containerChoices)
+			} else {
+				prompt = buildBatchARParamPromptStrictWithoutTypeGuidance(remaining, typeChoices, containerChoices, reason)
+			}
+
+			var batchResp arBatchResponse
+			if err := s.jsonInto(ctx, prompt, &batchResp); err != nil {
+				reason = fmt.Sprintf("上次回應無法解析：%v", err)
+				continue
+			}
+
+			respMap := make(map[int]*common.ARActionParams, len(batchResp.Steps))
+			for _, step := range batchResp.Steps {
+				if step.ARParameters != nil {
+					respMap[step.StepNumber] = step.ARParameters
+				}
+			}
+
+			var next []arPromptStep
+			var errors []string
+			for _, step := range remaining {
+				params, ok := respMap[step.StepNumber]
+				if !ok {
+					next = append(next, step)
+					errors = append(errors, fmt.Sprintf("缺少步驟 %d 的 ar_parameters", step.StepNumber))
+					continue
+				}
+				if err := validateARParams(*params); err != nil {
+					next = append(next, step)
+					errors = append(errors, fmt.Sprintf("步驟 %d 驗證失敗：%v", step.StepNumber, err))
+					continue
+				}
+
+				cp := *params
+				result.Recipe[step.Index].ARtype = cp.Type
+				result.Recipe[step.Index].ARParameters = &cp
+			}
+
+			remaining = next
+			if len(errors) > 0 {
+				reason = strings.Join(errors, "；")
+			} else {
+				reason = ""
+			}
+		}
+
+		for _, step := range remaining {
+			fallback, ferr := fallbackARParams(result.Recipe[step.Index], containerChoices, result.Ingredients)
+			if ferr != nil {
+				common.LogWarn("AR 參數回退失敗，採用預設值",
+					zap.Int("step", step.StepNumber),
+					zap.String("title", result.Recipe[step.Index].Title),
 					zap.Error(ferr),
 				)
 				fallback = defaultARParams(containerChoices)
 			}
 			if fallback == nil {
-				return nil, fmt.Errorf("ar_parameters missing for step %d (%s): model failed to produce valid AR JSON and default fallback unavailable", i+1, result.Recipe[i].Title)
+				return nil, fmt.Errorf("ar_parameters missing for step %d (%s): model failed to produce valid AR JSON and default fallback unavailable", step.StepNumber, result.Recipe[step.Index].Title)
 			}
 			common.LogWarn("AR 參數使用回退結果",
-				zap.Int("step", i+1),
-				zap.String("title", result.Recipe[i].Title),
+				zap.Int("step", step.StepNumber),
+				zap.String("title", result.Recipe[step.Index].Title),
 				zap.String("fallback_type", string(fallback.Type)),
 			)
-			result.Recipe[i].ARtype = fallback.Type
-			result.Recipe[i].ARParameters = fallback
+			result.Recipe[step.Index].ARtype = fallback.Type
+			result.Recipe[step.Index].ARParameters = fallback
 		}
+	}
 
-		// 檢查並補充動作資訊（原有邏輯）
+	for i := range result.Recipe {
 		for j := range result.Recipe[i].Actions {
 			if result.Recipe[i].Actions[j].Action == "" {
 				result.Recipe[i].Actions[j].Action = "無動作"
@@ -366,8 +421,8 @@ func (s *SuggestionService) SuggestRecipes(ctx context.Context, req *common.Reci
 			if result.Recipe[i].Actions[j].InstructionDetail == "" {
 				result.Recipe[i].Actions[j].InstructionDetail = "無細節說明"
 			}
-			if result.Recipe[i].Actions[j].TimeMinutes == "" {
-				result.Recipe[i].Actions[j].TimeMinutes = "1"
+			if result.Recipe[i].Actions[j].TimeMinutes <= "" {
+				result.Recipe[i].Actions[j].TimeMinutes = "0"
 			}
 			if result.Recipe[i].Actions[j].MaterialRequired == nil {
 				result.Recipe[i].Actions[j].MaterialRequired = []string{}
@@ -425,50 +480,6 @@ func inferContainerChoices(eqs []common.Equipment) []string {
 	}
 	sort.Strings(out)
 	return out
-}
-
-// 提示詞（完全按你的規範）
-func buildARParamPrompt(step string, choices []string, containerChoices []string) string {
-	join := func(ss []string) string { return strings.Join(ss, ", ") }
-	return fmt.Sprintf(`
-請根據以下烹飪步驟 "%s"，從 [%s] 中選擇最符合的 rawValue，並回傳以下 JSON 結構：
-{
-  "type": "選中的 rawValue",
-  "container": "選中的 container（%s）",
-  "ingredient": "食材或 null",
-  "color": "顏色或 null",
-  "time": 時間數值或 null,
-  "temperature": 溫度數值或 null,
-  "flameLevel": "small/medium/large 或 null"
-}
-依不同動畫類型，以下欄位為必須提供：
-- putIntoContainer: ingredient, container
-- stir: container, ingredient
-- pourLiquid: container, color, ingredient
-- flipPan: container
-- countdown: time, container
-- temperature: temperature, container
-- flame: container, flameLevel
-- sprinkle: container, ingredient
-- torch: ingredient
-- cut: ingredient
-- peel: ingredient
-- flip: container, ingredient
-- beatEgg: container
-
-請確保所有回傳的文字值ingredient 使用英文開頭小寫，並且不可回傳 "ingredient"、"food" 等泛用詞；若包含多個單字，請使用英文逗號","分隔，禁止使用底線"_"。
-請確保回傳的 JSON 包含上述必需欄位，並移除所有程式碼區塊標記。
-請確保回傳的 JSON 嚴格符合 iOS Codable 規範，不含 Optional 或其他與 JSON 格式無關的標識。
-範例格式：
-{
-  "type": "pourLiquid",
-  "container": "pan",
-  "ingredient": null,
-  "color": "brown",
-  "time": null,
-  "temperature": null,
-  "flameLevel": null
-}`, step, join(choices), join(containerChoices))
 }
 
 // 嚴格驗證（加入 ARtype 白名單）
@@ -561,45 +572,6 @@ func (s *SuggestionService) jsonInto(ctx context.Context, prompt string, out any
 		txt = txt[start : end+1]
 	}
 	return json.Unmarshal([]byte(txt), out)
-}
-
-// 注意：使用雙引號 + 字串串接，避免原始字串中出現 ``` 造成語法錯誤
-func buildARParamPromptStrict(step string, choices []string, containerChoices []string, reason string) string {
-	join := func(ss []string) string { return strings.Join(ss, ", ") }
-	return fmt.Sprintf(
-		"你先前的輸出未符合要求（%s）。請重新判斷，並務必遵守以下規則：\n"+
-			"- 必須從這些 type 中擇一（不可留空、不可自定義）：[%s]\n"+
-			"- 必須從這些 container 中擇一（不可留空、不可自定義）：[%s]\n"+
-			"- 請只輸出單一 JSON 物件，不要輸出任何說明文字，也不要使用程式碼區塊標記。\n"+
-			"烹飪步驟說明：「%s」\n\n"+
-			"請輸出：\n"+
-			"{\n"+
-			"  \"type\": \"<必填：從候選擇一>\",\n"+
-			"  \"container\": \"<必填：從候選擇一>\",\n"+
-			"  \"coordinate\": null,\n"+
-			"  \"ingredient\": null,\n"+
-			"  \"color\": null,\n"+
-			"  \"time\": null,\n"+
-			"  \"temperature\": null,\n"+
-			"  \"flameLevel\": null\n"+
-			"}\n"+
-			"依不同動畫類型，以下欄位為必須提供：\n"+
-			"- putIntoContainer: ingredient, container\n"+
-			"- stir: container, ingredient\n"+
-			"- pourLiquid: container, color, ingredient\n"+
-			"- flipPan: container\n"+
-			"- countdown: time, container\n"+
-			"- temperature: temperature, container\n"+
-			"- flame: container, flameLevel\n"+
-			"- sprinkle: container, ingredient\n"+
-			"- torch: ingredient\n"+
-			"- cut: ingredient\n"+
-			"- peel: ingredient\n"+
-			"- flip: container, ingredient\n"+
-			"- beatEgg: container\n"+
-			"請確保 ingredient（若非 null）以英文小寫開頭，且不得使用 \"ingredient\"、\"food\" 等泛用詞；若包含多個單字，請使用英文逗號\",\"分隔，禁止使用底線\"_\"。",
-		reason, join(choices), join(containerChoices), step,
-	)
 }
 
 func fallbackARParams(step common.RecipeStep, containerChoices []string, recipeIngredients []common.Ingredient) (*common.ARActionParams, error) {

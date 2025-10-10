@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"recipe-generator/internal/api/handlers/health"
 	recipeHandler "recipe-generator/internal/api/handlers/recipe"
 	"recipe-generator/internal/api/middleware"
@@ -21,8 +22,8 @@ import (
 )
 
 const (
-	// 超時設置 - 增加到 10 分鐘以支援複雜的食譜生成
-	timeoutDuration = 600 * time.Second
+	// 超時設置
+	timeoutDuration = 120 * time.Second
 	// 請求體大小限制 (10MB)
 	maxBodySize = 10 << 20
 )
@@ -64,7 +65,7 @@ func SetupRouter(cfg *config.Config, cacheManager *cache.CacheManager) (*gin.Eng
 	common.LogInfo("Initializing services",
 		zap.Bool("cache_enabled", cfg.Cache.Enabled),
 		zap.Int("queue_workers", cfg.Queue.Workers),
-		zap.String("model", cfg.Gemini.Model),
+		zap.String("model", cfg.OpenRouter.Model),
 		zap.Duration("timeout", timeoutDuration),
 	)
 
@@ -113,7 +114,7 @@ func SetupRouter(cfg *config.Config, cacheManager *cache.CacheManager) (*gin.Eng
 	router.Use(func(c *gin.Context) {
 		// 設置請求超時
 		ctx, cancel := context.WithTimeout(c.Request.Context(), timeoutDuration)
-		defer cancel() // 確保資源被釋放
+		defer cancel()
 
 		// 創建新的請求上下文
 		req := c.Request.WithContext(ctx)
@@ -146,13 +147,22 @@ func SetupRouter(cfg *config.Config, cacheManager *cache.CacheManager) (*gin.Eng
 		// 處理請求
 		c.Next()
 
-		// 檢查是否超時（但不嘗試寫入響應，因為可能已經寫入了）
+		// 檢查是否超時
 		if ctx.Err() == context.DeadlineExceeded {
-			common.LogWarn("Request completed but exceeded deadline",
+			common.LogError("Request timeout",
 				zap.String("path", c.Request.URL.Path),
 				zap.String("request_id", c.GetHeader("X-Request-ID")),
 				zap.Duration("timeout", timeoutDuration),
 			)
+			c.JSON(http.StatusGatewayTimeout, gin.H{
+				"error": "Request timeout",
+				"code":  "REQUEST_TIMEOUT",
+				"details": gin.H{
+					"timeout": timeoutDuration.String(),
+				},
+			})
+			c.Abort()
+			return
 		}
 	})
 
@@ -164,6 +174,8 @@ func SetupRouter(cfg *config.Config, cacheManager *cache.CacheManager) (*gin.Eng
 	// API 路由組
 	api := router.Group("/api/v1")
 	{
+		recipeHandlerInstance := recipeHandler.NewHandler(recipeSvc, suggestionSvc, aiService)
+
 		// 註冊食譜相關路由
 		recipeGroup := api.Group("/recipe")
 		{
@@ -176,16 +188,15 @@ func SetupRouter(cfg *config.Config, cacheManager *cache.CacheManager) (*gin.Eng
 			})
 
 			// 使用食材名稱生成食譜
-			recipeGroup.POST("/generate", func(c *gin.Context) {
-				handler := recipeHandler.NewHandler(recipeSvc, suggestionSvc)
-				handler.HandleRecipeByName(c)
-			})
+			recipeGroup.POST("/generate", recipeHandlerInstance.HandleRecipeByName)
 
 			// 使用食材與設備推薦食譜
-			recipeGroup.POST("/suggest", func(c *gin.Context) {
-				handler := recipeHandler.NewHandler(recipeSvc, suggestionSvc)
-				handler.HandleRecipeByIngredients(c)
-			})
+			recipeGroup.POST("/suggest", recipeHandlerInstance.HandleRecipeByIngredients)
+		}
+
+		cookGroup := api.Group("/cook")
+		{
+			cookGroup.POST("/qa", recipeHandlerInstance.HandleCookQA)
 		}
 	}
 

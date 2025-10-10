@@ -1,7 +1,11 @@
 package recipe
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
+	"strings"
+	recipeAI "recipe-generator/internal/core/ai/service"
 	recipeService "recipe-generator/internal/core/recipe"
 	"recipe-generator/internal/pkg/common"
 
@@ -33,24 +37,39 @@ type RecipeByNameResponse struct {
 }
 
 type RecipeStep struct {
-	StepNumber         int                    `json:"step_number"`
-	ARtype             common.ARtype          `json:"ARtype,omitempty"`
-	ARParameters       *common.ARActionParams `json:"ar_parameters,omitempty"`
-	Title              string                 `json:"title"`
-	Description        string                 `json:"description"`
-	Actions            []RecipeAction         `json:"actions"`
-	EstimatedTotalTime string                 `json:"estimated_total_time"`
-	Temperature        string                 `json:"temperature"`
-	Warnings           string                 `json:"warnings"`
-	Notes              string                 `json:"notes"`
+	StepNumber         int            `json:"step_number"`
+	ARtype           common.ARtype           `json:"ARtype,omitempty"`
+	ARParameters     *common.ARActionParams `json:"ar_parameters,omitempty"`
+	Title              string         `json:"title"`
+	Description        string         `json:"description"`
+	Actions            []RecipeAction `json:"actions"`
+	EstimatedTotalTime string         `json:"estimated_total_time"`
+	Temperature        string         `json:"temperature"`
+	Warnings           string         `json:"warnings"`
+	Notes              string         `json:"notes"`
 }
 
 type RecipeAction struct {
 	Action            string   `json:"action"`
 	ToolRequired      string   `json:"tool_required"`
 	MaterialRequired  []string `json:"material_required"`
-	TimeMinutes       string   `json:"time_minutes"`
+	TimeMinutes       int      `json:"time_minutes"`
 	InstructionDetail string   `json:"instruction_detail"`
+}
+
+// CookQARequest 使用者針對烹飪步驟進行即時問答
+type CookQARequest struct {
+	Question              string        `json:"question" binding:"required"`
+	CurrentStepDescription string        `json:"current_step_description,omitempty"`
+	Image                 string        `json:"image,omitempty"`
+	Recipe                common.Recipe `json:"recipe" binding:"required"`
+}
+
+// CookQAResponse AI 回覆的問答結果
+type CookQAResponse struct {
+	Answer     string    `json:"answer"`
+	KeyPoints  []string  `json:"key_points,omitempty"`
+	Confidence *float64  `json:"confidence,omitempty"`
 }
 
 // RecipeByIngredientsRequest 使用食材與設備資訊推薦食譜
@@ -68,13 +87,15 @@ type RecipeByIngredientsRequest struct {
 type Handler struct {
 	recipeService     *recipeService.RecipeService
 	suggestionService *recipeService.SuggestionService
+	aiService         *recipeAI.Service
 }
 
 // NewHandler 創建新的食譜處理程序
-func NewHandler(recipeService *recipeService.RecipeService, suggestionService *recipeService.SuggestionService) *Handler {
+func NewHandler(recipeService *recipeService.RecipeService, suggestionService *recipeService.SuggestionService, aiService *recipeAI.Service) *Handler {
 	return &Handler{
 		recipeService:     recipeService,
 		suggestionService: suggestionService,
+		aiService:         aiService,
 	}
 }
 
@@ -317,8 +338,8 @@ func (h *Handler) HandleRecipeByIngredients(c *gin.Context) {
 		}
 		response.Recipe[j] = RecipeStep{
 			StepNumber:         step.StepNumber,
-			ARtype:             step.ARtype,
-			ARParameters:       step.ARParameters,
+			ARtype:             step.ARtype,         
+    		ARParameters:       step.ARParameters,   
 			Title:              step.Title,
 			Description:        step.Description,
 			Actions:            actions,
@@ -335,6 +356,133 @@ func (h *Handler) HandleRecipeByIngredients(c *gin.Context) {
 	)
 
 	c.JSON(http.StatusOK, response)
+}
+
+// HandleCookQA 使用已有食譜與當前狀態回答烹飪問題
+func (h *Handler) HandleCookQA(c *gin.Context) {
+	requestID := c.GetHeader("X-Request-ID")
+	if requestID == "" {
+		requestID = uuid.New().String()
+		c.Header("X-Request-ID", requestID)
+	}
+
+	common.LogInfo("開始處理 Cook QA 請求",
+		zap.String("request_id", requestID),
+		zap.String("client_ip", c.ClientIP()),
+	)
+
+	if h.aiService == nil {
+		common.LogError("AI 服務尚未初始化",
+			zap.String("request_id", requestID),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "AI service not available"})
+		return
+	}
+
+	var req CookQARequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.LogError("Cook QA 請求格式無效",
+			zap.Error(err),
+			zap.String("request_id", requestID),
+		)
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request format"})
+		return
+	}
+
+	recipeJSON, err := common.ToJSON(req.Recipe)
+	if err != nil {
+		common.LogError("序列化食譜內容失敗",
+			zap.Error(err),
+			zap.String("request_id", requestID),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to serialize recipe"})
+		return
+	}
+
+	prompt := buildCookQAPrompt(req.Question, req.CurrentStepDescription, recipeJSON)
+
+	resp, err := h.aiService.ProcessRequest(c.Request.Context(), prompt, req.Image)
+	if err != nil {
+		common.LogError("Cook QA AI 服務失敗",
+			zap.Error(err),
+			zap.String("request_id", requestID),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Cook QA generation failed"})
+		return
+	}
+
+	if resp == nil || strings.TrimSpace(resp.Content) == "" {
+		common.LogError("Cook QA AI 回應為空",
+			zap.String("request_id", requestID),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Empty AI response"})
+		return
+	}
+
+	answer, err := parseCookQAResponse(resp.Content)
+	if err != nil {
+		common.LogError("Cook QA AI 回應解析失敗",
+			zap.Error(err),
+			zap.String("request_id", requestID),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to parse AI response"})
+		return
+	}
+
+	if strings.TrimSpace(answer.Answer) == "" {
+		common.LogError("Cook QA 回應缺少答案",
+			zap.String("request_id", requestID),
+		)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "AI response missing answer"})
+		return
+	}
+
+	common.LogInfo("Cook QA 成功",
+		zap.String("request_id", requestID),
+	)
+
+	c.JSON(http.StatusOK, answer)
+}
+
+
+func buildCookQAPrompt(question, currentStep, recipeJSON string) string {
+	var sb strings.Builder
+	sb.WriteString("你是一位專業的中式料理助理，請針對使用者的問題提供具體建議。\n")
+	sb.WriteString("請務必閱讀以下資訊並回應。\n")
+	sb.WriteString(fmt.Sprintf("使用者問題：%s\n", question))
+	if strings.TrimSpace(currentStep) != "" {
+		sb.WriteString(fmt.Sprintf("目前步驟狀態：%s\n", currentStep))
+	}
+	sb.WriteString("以下是完整的食譜 JSON：\n")
+	sb.WriteString(recipeJSON)
+	sb.WriteString("\n請僅回傳 JSON，格式如下：\n")
+	sb.WriteString("{\n")
+	sb.WriteString("  \"answer\": \"必填，提供明確建議\",\n")
+	sb.WriteString("  \"key_points\": [\"若需要，可補充重點\"],\n")
+	sb.WriteString("  \"confidence\": 0.0\n")
+	sb.WriteString("}\n")
+	sb.WriteString("說明：\n")
+	sb.WriteString("- 僅輸出單一 JSON 物件，不要包含其他文字或程式碼區塊標記。\n")
+	sb.WriteString("- answer 必須使用繁體中文，內容要可直接執行。\n")
+	sb.WriteString("- key_points 可省略或為空陣列。\n")
+	sb.WriteString("- confidence (0~1) 若不確定可傳 0.0。\n")
+	return sb.String()
+}
+
+func parseCookQAResponse(content string) (*CookQAResponse, error) {
+	text := strings.TrimSpace(content)
+	text = strings.TrimPrefix(text, "```json")
+	text = strings.TrimPrefix(text, "```")
+	text = strings.TrimSuffix(text, "```")
+	text = strings.TrimSpace(text)
+	if start, end := strings.Index(text, "{"), strings.LastIndex(text, "}"); start != -1 && end != -1 && end > start {
+		text = text[start : end+1]
+	}
+	var result CookQAResponse
+	if err := json.Unmarshal([]byte(text), &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
 }
 
 // Ingredient 食材結構

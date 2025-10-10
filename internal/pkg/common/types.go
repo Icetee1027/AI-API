@@ -66,7 +66,7 @@ type RecipeAction struct {
 	Action            string   `json:"action"`
 	ToolRequired      string   `json:"tool_required"`
 	MaterialRequired  []string `json:"material_required"`
-	TimeMinutes       string   `json:"time_minutes"` // 改為字串以接受 AI 可能返回的各種格式
+	TimeMinutes       string   `json:"time_minutes"`
 	InstructionDetail string   `json:"instruction_detail"`
 }
 

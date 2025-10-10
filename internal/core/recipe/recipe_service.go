@@ -56,7 +56,7 @@ func (s *RecipeService) GenerateRecipe(ctx context.Context, dishName string, ing
 		7. 不需要考慮可讀性，請省略所有空格和換行，返回最緊湊的 JSON 格式
 		8. 營養資訊要根據實際食材和份量估算
 		9. 烹飪時間要包含準備時間和烹飪時間的總和
-		10. time_minutes 欄位應為字串格式（例如："1"、"2"、"未知"）
+	    10. time_minutes 欄位應為字串格式（例如："1"、"2"、"未知"）
 		11. warnings 欄位必須是字串類型，如果沒有警告事項請填寫 null
 		12. 每個步驟都必須包含 warnings 欄位，不能省略此欄位
 		13. 不要使用\n，不需要換行
@@ -239,18 +239,14 @@ func (s *RecipeService) GenerateRecipe(ctx context.Context, dishName string, ing
 		string(common.ARFlame), string(common.ARSprinkle), string(common.ARTorch),
 		string(common.ARCut), string(common.ARPeel), string(common.ARFlip), string(common.ARBeatEgg),
 	}
-	for i := range result.Recipe {
-		common.LogDebug("開始處理步驟 AR 參數",
-			zap.Int("step", i+1),
-			zap.Int("total_steps", len(result.Recipe)),
-			zap.String("title", result.Recipe[i].Title),
-		)
 
-		// 若 AI 已提供參數，先進行驗證
+	var stepsToGenerate []arPromptStep
+	for i := range result.Recipe {
 		if result.Recipe[i].ARParameters != nil {
 			if err := validateARParams(*result.Recipe[i].ARParameters); err != nil {
-				common.LogWarn("AI 回傳的 AR 參數驗證失敗，改用回退值",
+				common.LogWarn("AI 回傳的 AR 參數驗證失敗，重新生成",
 					zap.Int("step", i+1),
+					zap.String("title", result.Recipe[i].Title),
 					zap.Error(err),
 				)
 				result.Recipe[i].ARParameters = nil
@@ -260,55 +256,91 @@ func (s *RecipeService) GenerateRecipe(ctx context.Context, dishName string, ing
 			}
 		}
 
-		stepText := result.Recipe[i].Title + "。 " + result.Recipe[i].Description
-		arPrompt := buildARParamPrompt(stepText, typeChoices, containerChoices)
-		var params common.ARActionParams
-		var genErr error
+		stepsToGenerate = append(stepsToGenerate, arPromptStep{
+			Index:       i,
+			StepNumber:  result.Recipe[i].StepNumber,
+			Title:       result.Recipe[i].Title,
+			Description: result.Recipe[i].Description,
+		})
+	}
+
+	if len(stepsToGenerate) > 0 {
 		const maxTries = 3
-		for attempt := 1; attempt <= maxTries; attempt++ {
-			common.LogDebug("嘗試生成 AR 參數",
-				zap.Int("step", i+1),
-				zap.Int("attempt", attempt),
-				zap.Int("max_tries", maxTries),
-			)
-			params = common.ARActionParams{}
-			genErr = s.jsonInto(ctx, arPrompt, &params)
-			if genErr == nil {
-				if err := validateARParams(params); err == nil {
-					cp := params
-					result.Recipe[i].ARtype = cp.Type
-					result.Recipe[i].ARParameters = &cp
-					break
-				}
-				arPrompt = buildARParamPromptStrict(stepText, typeChoices, containerChoices, fmt.Sprintf("上次錯誤：%v", err))
+		remaining := stepsToGenerate
+		reason := ""
+
+		for attempt := 1; attempt <= maxTries && len(remaining) > 0; attempt++ {
+			var prompt string
+			if attempt == 1 && reason == "" {
+				prompt = buildBatchARParamPrompt(remaining, typeChoices, containerChoices)
+			} else {
+				prompt = buildBatchARParamPromptStrict(remaining, typeChoices, containerChoices, reason)
+			}
+
+			var batchResp arBatchResponse
+			if err := s.jsonInto(ctx, prompt, &batchResp); err != nil {
+				reason = fmt.Sprintf("上次回應無法解析：%v", err)
 				continue
 			}
-			arPrompt = buildARParamPromptStrict(stepText, typeChoices, containerChoices, "請只輸出單一 JSON，不要包含任何自然語言或程式碼區塊標記")
+
+			respMap := make(map[int]*common.ARActionParams, len(batchResp.Steps))
+			for _, step := range batchResp.Steps {
+				if step.ARParameters != nil {
+					respMap[step.StepNumber] = step.ARParameters
+				}
+			}
+
+			var next []arPromptStep
+			var errors []string
+
+			for _, step := range remaining {
+				params, ok := respMap[step.StepNumber]
+				if !ok {
+					next = append(next, step)
+					errors = append(errors, fmt.Sprintf("缺少步驟 %d 的 ar_parameters", step.StepNumber))
+					continue
+				}
+
+				if err := validateARParams(*params); err != nil {
+					next = append(next, step)
+					errors = append(errors, fmt.Sprintf("步驟 %d 驗證失敗：%v", step.StepNumber, err))
+					continue
+				}
+
+				cp := *params
+				result.Recipe[step.Index].ARtype = cp.Type
+				result.Recipe[step.Index].ARParameters = &cp
+			}
+
+			remaining = next
+			if len(errors) > 0 {
+				reason = strings.Join(errors, "；")
+			} else {
+				reason = ""
+			}
 		}
 
-		if result.Recipe[i].ARParameters != nil {
-			continue
-		}
-
-		fallback, ferr := fallbackARParams(result.Recipe[i], containerChoices, result.Ingredients)
-		if ferr != nil {
-			common.LogWarn("AR 參數回退失敗，採用預設值",
-				zap.Int("step", i+1),
-				zap.String("title", result.Recipe[i].Title),
-				zap.Error(ferr),
+		for _, step := range remaining {
+			fallback, ferr := fallbackARParams(result.Recipe[step.Index], containerChoices, result.Ingredients)
+			if ferr != nil {
+				common.LogWarn("AR 參數回退失敗，採用預設值",
+					zap.Int("step", step.StepNumber),
+					zap.String("title", result.Recipe[step.Index].Title),
+					zap.Error(ferr),
+				)
+				fallback = defaultARParams(containerChoices)
+			}
+			if fallback == nil {
+				return nil, fmt.Errorf("ar_parameters missing for step %d (%s): model failed to produce valid AR JSON and default fallback unavailable", step.StepNumber, result.Recipe[step.Index].Title)
+			}
+			common.LogWarn("AR 參數使用回退結果",
+				zap.Int("step", step.StepNumber),
+				zap.String("title", result.Recipe[step.Index].Title),
+				zap.String("fallback_type", string(fallback.Type)),
 			)
-			fallback = defaultARParams(containerChoices)
+			result.Recipe[step.Index].ARtype = fallback.Type
+			result.Recipe[step.Index].ARParameters = fallback
 		}
-		if fallback == nil {
-			return nil, fmt.Errorf("ar_parameters missing for step %d (%s): model failed to produce valid AR JSON and default fallback unavailable", i+1, result.Recipe[i].Title)
-		}
-		common.LogWarn("AR 參數使用回退結果",
-			zap.Int("step", i+1),
-			zap.String("title", result.Recipe[i].Title),
-			zap.String("fallback_type", string(fallback.Type)),
-		)
-		result.Recipe[i].ARtype = fallback.Type
-		result.Recipe[i].ARParameters = fallback
 	}
 
 	// 驗證必要欄位
@@ -321,15 +353,8 @@ func (s *RecipeService) GenerateRecipe(ctx context.Context, dishName string, ing
 
 // jsonInto 呼叫 AI，並嘗試將輸出直接解析為 JSON
 func (s *RecipeService) jsonInto(ctx context.Context, prompt string, out any) error {
-	common.LogDebug("調用 AI 服務 (jsonInto)",
-		zap.Int("prompt_length", len(prompt)),
-	)
-
 	resp, err := s.aiService.ProcessRequest(ctx, prompt, "")
 	if err != nil {
-		common.LogError("AI 服務調用失敗 (jsonInto)",
-			zap.Error(err),
-		)
 		return err
 	}
 	if resp == nil || resp.Content == "" {

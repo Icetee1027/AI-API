@@ -18,9 +18,9 @@ AI 智能食譜 API，支援食譜生成、食材/設備/食物圖片辨識，�
 │   │   ├── middleware/       # 請求日誌、限流、去重等中間件
 │   │   └── router.go         # 路由註冊
 │   ├── core/
-│   │   ├── ai/               # AI 服務、快取、Gemini 整合
+│   │   ├── ai/               # AI 服務、快取、OpenRouter 整合
 │   │   │   ├── cache/        # 記憶體快取（LRU/TTL）
-│   │   │   ├── gemini/       # Gemini API 封裝
+│   │   │   ├── openrouter/   # OpenRouter API 封裝
 │   │   │   ├── provider/     # AI 供應商抽象
 │   │   │   ├── queue/        # 請求佇列
 │   │   │   └── service/      # AI 請求服務
@@ -38,7 +38,7 @@ AI 智能食譜 API，支援食譜生成、食材/設備/食物圖片辨識，�
 ## 專案設計理念
 
 - **嚴格 API Schema 驗證**：所有 handler 輸入/輸出皆與 OpenAPI 規格完全一致，便於前後端協作與自動化測試。
-- **AI 驅動**：整合 Google Gemini API，確保食譜生成與辨識結果具備高品質與彈性。
+- **AI 驅動**：整合 OpenRouter（Google Gemini）模型，確保食譜生成與辨識結果具備高品質與彈性。
 - **高效快取與限流**：純記憶體快取（無外部 Redis），支援 TTL、LRU、請求去重與速率限制，保證高併發下的穩定性。
 - **現代化日誌**：多級日誌、中文標題、避免敏感/大資料外洩，方便除錯與維運。
 - **健康檢查與自動監控**：/health、/ready、/live 路由，Docker HEALTHCHECK，便於雲端部署與自動化監控。
@@ -51,7 +51,7 @@ AI 智能食譜 API，支援食譜生成、食材/設備/食物圖片辨識，�
 - **Go 1.21+**：高效能、易維護
 - **Gin**：API 路由與中間件
 - **OpenAPI 3.0**：API schema 驗證與自動文件
-- **Google Gemini API**：AI 服務（直接使用 Gemini API）
+- **OpenRouter**：AI 服務（Google Gemini）
 - **Zap**：高效結構化日誌
 - **In-memory LRU/TTL Cache**：極速快取
 - **Docker**：一致性部署
@@ -67,7 +67,7 @@ AI 智能食譜 API，支援食譜生成、食材/設備/食物圖片辨識，�
 - **速率限制**：可設定請求速率與去重時間窗
 - **健康檢查**：/health、/ready、/live 路由，Docker HEALTHCHECK
 - **多級日誌**：info/debug/error，中文標題，避免敏感/大資料外洩
-- **Google Gemini AI 整合**：直接使用 Gemini API 進行圖像識別與文字生成
+- **OpenRouter (Google Gemini) AI 整合**
 
 ---
 
@@ -86,7 +86,7 @@ AI 智能食譜 API，支援食譜生成、食材/設備/食物圖片辨識，�
 git clone <your-repo-url>
 cd <project-folder>
 cp .env.example .env
-# 編輯 .env，填入 Gemini API Key 等必要參數
+# 編輯 .env，填入 OpenRouter API Key 等必要參數
 go run cmd/api/main.go
 ```
 服務預設於 [http://\<IP\>:8080](http://<IP>:8080) 運行。
@@ -124,6 +124,7 @@ docker-compose up --build -d
 - `POST /api/v1/recipe/ingredient` — 圖片辨識食材與設備
 - `POST /api/v1/recipe/generate` — 依據名稱/偏好生成詳細食譜
 - `POST /api/v1/recipe/suggest` — 根據食材/設備推薦食譜
+- `POST /api/v1/cook/qa` — 烹調過程即時問答
 - `GET /health` `/ready` `/live` — 健康檢查
 
 **所有 API 輸入/輸出皆嚴格遵循 OpenAPI schema，請參考 `recipe-api.yaml`。**
@@ -221,12 +222,7 @@ POST /api/v1/recipe/generate
       "ARtype": "cut",
       "ar_parameters": {
         "type": "cut",
-        "container": null,
-        "ingredient": "tomato",
-        "color": null,
-        "time": null,
-        "temperature": null,
-        "flameLevel": null
+        "ingredient": "tomato"
       },
       "title": "備料",
       "description": "將番茄切塊，蛋打散備用。",
@@ -241,8 +237,8 @@ POST /api/v1/recipe/generate
       ],
       "estimated_total_time": "2分鐘",
       "temperature": "常溫",
-      "warnings": null,
-      "notes": ""
+      "warnings": "無",
+      "notes": "無備註"
     }
   ]
 }
@@ -286,11 +282,7 @@ POST /api/v1/recipe/suggest
       "ar_parameters": {
         "type": "stir",
         "container": "pan",
-        "ingredient": "egg",
-        "color": null,
-        "time": null,
-        "temperature": null,
-        "flameLevel": null
+        "ingredient": "egg"
       },
       "title": "煎蛋",
       "description": "將蛋液倒入鍋中，小火煎熟。",
@@ -305,7 +297,7 @@ POST /api/v1/recipe/suggest
       ],
       "estimated_total_time": "3分鐘",
       "temperature": "小火",
-      "warnings": null,
+      "warnings": "無",
       "notes": "可加鹽調味"
     }
   ]
@@ -341,12 +333,7 @@ POST /api/v1/cook/qa
         "ARtype": "cut",
         "ar_parameters": {
           "type": "cut",
-          "container": null,
-          "ingredient": "tomato",
-          "color": null,
-          "time": null,
-          "temperature": null,
-          "flameLevel": null
+          "ingredient": "tomato"
         },
         "title": "備料",
         "description": "將番茄切塊，蛋打散備用。",
@@ -361,8 +348,8 @@ POST /api/v1/cook/qa
         ],
         "estimated_total_time": "2分鐘",
         "temperature": "常溫",
-        "warnings": null,
-        "notes": ""
+        "warnings": "無",
+        "notes": "無備註"
       }
     ]
   }
@@ -423,8 +410,8 @@ POST /api/v1/cook/qa
 | 變數名稱 | 說明 | 範例/預設值 |
 |---|---|---|
 | PORT | 服務監聽埠號 | 8080 |
-| GEMINI_API_KEY | Gemini API 金鑰 | your-gemini-api-key-here |
-| GEMINI_MODEL | 預設 AI 模型 | gemini-2.0-flash-exp |
+| APP_OPENROUTER_API_KEY | OpenRouter API 金鑰 | your-api-key-here |
+| APP_OPENROUTER_MODEL | 預設 AI 模型 | google/gemini-2.0-flash-001 |
 | CACHE_ENABLED | 是否啟用快取 | true |
 | CACHE_MAX_SIZE | 快取最大數量 | 1000 |
 | CACHE_TTL | 單筆快取有效時間 | 1h |
@@ -501,8 +488,8 @@ POST /api/v1/cook/qa
 - 於 internal/api/handlers/recipe/ 新增 handler，並於 router.go 註冊路由。
 - schema 需同步更新 recipe-api.yaml。
 
-**Q: 如何自訂 AI 模型？**  
-- 修改 .env 的 GEMINI_MODEL，選擇不同的 Gemini 模型（如 gemini-pro、gemini-2.0-flash-exp 等）。
+**Q: 如何自訂 AI 供應商或模型？**  
+- 修改 .env 的 APP_OPENROUTER_MODEL，或擴充 internal/core/ai/provider/。
 
 ---
 

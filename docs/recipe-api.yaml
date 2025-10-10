@@ -79,6 +79,24 @@ paths:
               schema:
                 $ref: '#/components/schemas/RecipeByNameResponse'
 
+  /cook/qa:
+    post:
+      summary: 烹調過程即時問答
+      description: 依據使用者當前步驟、問題與完整食譜，提供即時烹飪建議。
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CookQARequest'
+      responses:
+        '200':
+          description: AI 回覆的烹飪建議
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CookQAResponse'
+
 components:
   schemas:
     # --- 食物辨識 ---
@@ -248,6 +266,8 @@ components:
           type: integer
         ARtype:
           $ref: '#/components/schemas/ARtype'
+        ar_parameters:
+          $ref: '#/components/schemas/ARActionParams'
         title:
           type: string
         description:
@@ -288,7 +308,33 @@ components:
         available_ingredients:
           type: array
           items:
-            $ref: '#/components/schemas/Ingredient'
+            $ref:     CookQARequest:
+      type: object
+      properties:
+        question:
+          type: string
+        current_step_description:
+          type: string
+        image:
+          type: string
+          description: base64 encoded image 或 image URL
+        recipe:
+          $ref: '#/components/schemas/RecipeByNameResponse'
+      required: [question, recipe]
+
+    CookQAResponse:
+      type: object
+      properties:
+        answer:
+          type: string
+        key_points:
+          type: array
+          items:
+            type: string
+        confidence:
+          type: number
+      required: [answer]
+'#/components/schemas/Ingredient'
         available_equipment:
           type: array
           items:
