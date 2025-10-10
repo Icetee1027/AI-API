@@ -65,7 +65,7 @@ func SetupRouter(cfg *config.Config, cacheManager *cache.CacheManager) (*gin.Eng
 	common.LogInfo("Initializing services",
 		zap.Bool("cache_enabled", cfg.Cache.Enabled),
 		zap.Int("queue_workers", cfg.Queue.Workers),
-		zap.String("model", cfg.OpenRouter.Model),
+		zap.String("model", cfg.Gemini.Model),
 		zap.Duration("timeout", timeoutDuration),
 	)
 

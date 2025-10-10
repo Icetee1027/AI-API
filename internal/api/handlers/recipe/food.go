@@ -102,7 +102,7 @@ func HandleFoodRecognition(foodService *recipeService.FoodService, imageService 
 		if err != nil {
 			// 圖片格式錯誤，回傳 400
 			errStr := err.Error()
-			if errStr == "no choices in OpenRouter response" {
+			if errStr == "no choices in AI response" {
 				common.LogError("AI 無回應 (no choices)",
 					zap.String("request_id", requestID),
 					zap.String("image_type", getImageType(processedImage)),

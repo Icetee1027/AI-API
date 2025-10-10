@@ -23,16 +23,7 @@ func NewService(aiService *service.Service, cacheManager *cache.CacheManager) *S
 }
 
 // handleAIResponse 處理 AI 回應（已棄用，不再使用）
-// func (s *Service) handleAIResponse(resp *openrouter.Response, err error) (string, error) {
-// 	if err != nil {
-// 		return "", fmt.Errorf("AI service error: %w", err)
-// 	}
-// 	if resp == nil || len(resp.Choices) == 0 || resp.Choices[0].Message.Content == "" {
-// 		return "", fmt.Errorf("empty AI response")
-// 	}
-// 	contentText := resp.Choices[0].Message.Content
-// 	return strings.TrimSpace(contentText), nil
-// }
+// 此函數已被移除，現在統一使用 aiService.ProcessRequest
 
 // getCacheKey 生成緩存鍵
 func (s *Service) getCacheKey(prefix string, data string) string {

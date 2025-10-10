@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	recipeAI "recipe-generator/internal/core/ai/service"
 	recipeService "recipe-generator/internal/core/recipe"
 	"recipe-generator/internal/pkg/common"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -37,39 +37,39 @@ type RecipeByNameResponse struct {
 }
 
 type RecipeStep struct {
-	StepNumber         int            `json:"step_number"`
-	ARtype           common.ARtype           `json:"ARtype,omitempty"`
-	ARParameters     *common.ARActionParams `json:"ar_parameters,omitempty"`
-	Title              string         `json:"title"`
-	Description        string         `json:"description"`
-	Actions            []RecipeAction `json:"actions"`
-	EstimatedTotalTime string         `json:"estimated_total_time"`
-	Temperature        string         `json:"temperature"`
-	Warnings           string         `json:"warnings"`
-	Notes              string         `json:"notes"`
+	StepNumber         int                    `json:"step_number"`
+	ARtype             common.ARtype          `json:"ARtype,omitempty"`
+	ARParameters       *common.ARActionParams `json:"ar_parameters,omitempty"`
+	Title              string                 `json:"title"`
+	Description        string                 `json:"description"`
+	Actions            []RecipeAction         `json:"actions"`
+	EstimatedTotalTime string                 `json:"estimated_total_time"`
+	Temperature        string                 `json:"temperature"`
+	Warnings           string                 `json:"warnings"`
+	Notes              string                 `json:"notes"`
 }
 
 type RecipeAction struct {
 	Action            string   `json:"action"`
 	ToolRequired      string   `json:"tool_required"`
 	MaterialRequired  []string `json:"material_required"`
-	TimeMinutes       int      `json:"time_minutes"`
+	TimeMinutes       string   `json:"time_minutes"`
 	InstructionDetail string   `json:"instruction_detail"`
 }
 
 // CookQARequest 使用者針對烹飪步驟進行即時問答
 type CookQARequest struct {
-	Question              string        `json:"question" binding:"required"`
+	Question               string        `json:"question" binding:"required"`
 	CurrentStepDescription string        `json:"current_step_description,omitempty"`
-	Image                 string        `json:"image,omitempty"`
-	Recipe                common.Recipe `json:"recipe" binding:"required"`
+	Image                  string        `json:"image,omitempty"`
+	Recipe                 common.Recipe `json:"recipe" binding:"required"`
 }
 
 // CookQAResponse AI 回覆的問答結果
 type CookQAResponse struct {
-	Answer     string    `json:"answer"`
-	KeyPoints  []string  `json:"key_points,omitempty"`
-	Confidence *float64  `json:"confidence,omitempty"`
+	Answer     string   `json:"answer"`
+	KeyPoints  []string `json:"key_points,omitempty"`
+	Confidence *float64 `json:"confidence,omitempty"`
 }
 
 // RecipeByIngredientsRequest 使用食材與設備資訊推薦食譜
@@ -338,8 +338,8 @@ func (h *Handler) HandleRecipeByIngredients(c *gin.Context) {
 		}
 		response.Recipe[j] = RecipeStep{
 			StepNumber:         step.StepNumber,
-			ARtype:             step.ARtype,         
-    		ARParameters:       step.ARParameters,   
+			ARtype:             step.ARtype,
+			ARParameters:       step.ARParameters,
 			Title:              step.Title,
 			Description:        step.Description,
 			Actions:            actions,
@@ -443,7 +443,6 @@ func (h *Handler) HandleCookQA(c *gin.Context) {
 
 	c.JSON(http.StatusOK, answer)
 }
-
 
 func buildCookQAPrompt(question, currentStep, recipeJSON string) string {
 	var sb strings.Builder
