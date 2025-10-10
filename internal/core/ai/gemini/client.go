@@ -281,11 +281,16 @@ func (c *Client) Generate(ctx context.Context, prompt, imageData string) (*Respo
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
+		// 遮罩錯誤訊息中的 API Key
+		errMsg := err.Error()
+		if strings.Contains(errMsg, c.config.Gemini.APIKey) {
+			errMsg = strings.ReplaceAll(errMsg, c.config.Gemini.APIKey, "***API_KEY_HIDDEN***")
+		}
 		common.LogError("發送請求到 AI 服務失敗",
-			zap.Error(err),
+			zap.String("error", errMsg),
 			zap.String("model", c.config.Gemini.Model),
 		)
-		return nil, fmt.Errorf("failed to send request: %w", err)
+		return nil, fmt.Errorf("failed to send request to Gemini: %s", errMsg)
 	}
 	defer resp.Body.Close()
 

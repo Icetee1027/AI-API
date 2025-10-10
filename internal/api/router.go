@@ -22,8 +22,8 @@ import (
 )
 
 const (
-	// 超時設置
-	timeoutDuration = 120 * time.Second
+	// 超時設置 - 增加到 5 分鐘以支持複雜的 AI 請求（特別是圖片處理）
+	timeoutDuration = 300 * time.Second
 	// 請求體大小限制 (10MB)
 	maxBodySize = 10 << 20
 )

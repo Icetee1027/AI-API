@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"recipe-generator/internal/infrastructure/config"
 	"recipe-generator/internal/pkg/common"
@@ -56,7 +57,8 @@ type SafetySetting struct {
 func NewGeminiService(cfg *config.Config) *GeminiService {
 	client := resty.New().
 		SetBaseURL("https://generativelanguage.googleapis.com/v1beta/models").
-		SetHeader("Content-Type", "application/json")
+		SetHeader("Content-Type", "application/json").
+		SetTimeout(5 * time.Minute) // 設置 5 分鐘超時以支持複雜的 AI 請求
 
 	return &GeminiService{
 		config: cfg,
@@ -159,7 +161,16 @@ func (s *GeminiService) GenerateResponse(ctx context.Context, prompt string, ima
 		Post(url)
 
 	if err != nil {
-		return "", fmt.Errorf("failed to send request to Gemini: %w", err)
+		// 遮罩錯誤訊息中的 API Key
+		errMsg := err.Error()
+		if strings.Contains(errMsg, s.config.Gemini.APIKey) {
+			errMsg = strings.ReplaceAll(errMsg, s.config.Gemini.APIKey, "***API_KEY_HIDDEN***")
+		}
+		common.LogError("AI 服務請求失敗",
+			zap.String("error", errMsg),
+			zap.String("model", s.config.Gemini.Model),
+		)
+		return "", fmt.Errorf("failed to send request to Gemini: %s", errMsg)
 	}
 
 	if resp.StatusCode() != http.StatusOK {
